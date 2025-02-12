@@ -1,9 +1,10 @@
-<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Microphone Audio Effects</title>
+    <title>Microphone Recorder & Effects</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.26/Tone.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -17,90 +18,132 @@
         .slider-container {
             margin: 10px 0;
         }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
 
-    <button id="startBtn">Play Microphone Audio</button>
+    <button id="startRecording">Start Recording</button>
+    <button id="stopRecording" class="hidden">Stop Recording</button>
 
     <div class="controls" id="controls">
+        <button id="playRecording">Play Recording</button>
+        
         <div>
             <input type="checkbox" id="hearVoice">
             <label for="hearVoice">Hear Your Voice</label>
         </div>
 
         <div class="slider-container">
-            <label>Pitch Shift: <span id="pitchValue">1</span>x</label>
-            <input type="range" id="pitchShift" min="0.5" max="2" step="0.01" value="1">
+            <label>Pitch Shift: <span id="pitchValue">0</span> semitones</label>
+            <input type="range" id="pitchShift" min="-12" max="12" step="1" value="0">
         </div>
         <div class="slider-container">
-            <label>Speed (without pitch change): <span id="speedValue">1</span>x</label>
+            <label>Speed: <span id="speedValue">1</span>x</label>
             <input type="range" id="speed" min="0.5" max="2" step="0.01" value="1">
         </div>
         <div class="slider-container">
             <label>Delay: <span id="delayValue">0</span> sec</label>
             <input type="range" id="delay" min="0" max="2" step="0.1" value="0">
         </div>
+
+        <div id="downloadOptions" class="hidden">
+            <label>Save As:</label>
+            <button class="saveBtn" data-format="mp3">MP3</button>
+            <button class="saveBtn" data-format="ogg">OGG</button>
+            <button class="saveBtn" data-format="wav">WAV</button>
+        </div>
     </div>
 
     <script>
-        let audioContext, source, pitchNode, delayNode, gainNode;
-        const startBtn = document.getElementById("startBtn");
+        let mic, recorder, recordedBuffer, pitchShift, delayEffect, gainNode;
+        const startRecBtn = document.getElementById("startRecording");
+        const stopRecBtn = document.getElementById("stopRecording");
+        const playRecBtn = document.getElementById("playRecording");
         const controlsDiv = document.getElementById("controls");
         const hearVoiceCheckbox = document.getElementById("hearVoice");
+        const downloadOptions = document.getElementById("downloadOptions");
 
-        async function startMicrophone() {
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                source = audioContext.createMediaStreamSource(stream);
+        async function startRecording() {
+            await Tone.start();
+            mic = new Tone.UserMedia();
+            recorder = new Tone.Recorder();
 
-                // Create nodes
-                pitchNode = audioContext.createBiquadFilter();
-                pitchNode.type = "allpass"; // Basic pitch shifting (not ideal, but works)
+            // Create Pitch Shift Effect
+            pitchShift = new Tone.PitchShift(0);
+            mic.connect(pitchShift);
 
-                delayNode = audioContext.createDelay(2.0);
-                delayNode.delayTime.value = 0;
+            // Create Delay Effect
+            delayEffect = new Tone.FeedbackDelay("0s");
+            pitchShift.connect(delayEffect);
 
-                gainNode = audioContext.createGain();
-                gainNode.gain.value = 0; // Start muted until checkbox is checked
+            // Create Gain Node for Hearing Own Voice
+            gainNode = new Tone.Gain(0);
+            delayEffect.connect(gainNode);
+            gainNode.toDestination();
 
-                // Connect nodes
-                source.connect(pitchNode);
-                pitchNode.connect(delayNode);
-                delayNode.connect(gainNode);
-                gainNode.connect(audioContext.destination); // Only plays when checkbox is checked
+            await mic.open();
+            mic.connect(recorder);
+            await recorder.start();
 
-                // Show controls
-                controlsDiv.style.display = "block";
-            } catch (error) {
-                console.error("Error accessing microphone:", error);
-                alert("Microphone access denied!");
-            }
+            startRecBtn.classList.add("hidden");
+            stopRecBtn.classList.remove("hidden");
         }
 
-        startBtn.addEventListener("click", startMicrophone);
+        async function stopRecording() {
+            recordedBuffer = await recorder.stop();
+            stopRecBtn.classList.add("hidden");
+            controlsDiv.style.display = "block";
+            downloadOptions.classList.remove("hidden");
+        }
 
-        // Adjust Pitch Shift (basic approximation)
+        function playRecording() {
+            if (!recordedBuffer) return;
+            const player = new Tone.Player(recordedBuffer).toDestination();
+            player.playbackRate = parseFloat(document.getElementById("speed").value);
+            pitchShift.pitch = parseInt(document.getElementById("pitchShift").value);
+            delayEffect.delayTime.value = parseFloat(document.getElementById("delay").value);
+            player.start();
+        }
+
+        function downloadRecording(format) {
+            if (!recordedBuffer) return;
+            const blob = new Blob([recordedBuffer], { type: `audio/${format}` });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `recording.${format}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        startRecBtn.addEventListener("click", startRecording);
+        stopRecBtn.addEventListener("click", stopRecording);
+        playRecBtn.addEventListener("click", playRecording);
+
         document.getElementById("pitchShift").addEventListener("input", function() {
-            pitchNode.frequency.value = this.value * 1000;
+            pitchShift.pitch = parseInt(this.value);
             document.getElementById("pitchValue").innerText = this.value;
         });
 
-        // Adjust Speed (not implemented due to real-time streaming limitations)
         document.getElementById("speed").addEventListener("input", function() {
             document.getElementById("speedValue").innerText = this.value;
         });
 
-        // Adjust Delay
         document.getElementById("delay").addEventListener("input", function() {
-            delayNode.delayTime.value = this.value;
+            delayEffect.delayTime.value = this.value;
             document.getElementById("delayValue").innerText = this.value;
         });
 
-        // Enable/Disable hearing voice
         hearVoiceCheckbox.addEventListener("change", function() {
             gainNode.gain.value = this.checked ? 1 : 0;
+        });
+
+        document.querySelectorAll(".saveBtn").forEach(button => {
+            button.addEventListener("click", () => downloadRecording(button.dataset.format));
         });
 
     </script>
