@@ -3,34 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Microphone Recorder & Effects</title>
+    <title>Microphone Audio Effects & Recording</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.26/Tone.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/RecordRTC/5.6.2/RecordRTC.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
             text-align: center;
             margin-top: 50px;
         }
-        .controls {
+        .controls, .recording-controls {
             display: none;
             margin-top: 20px;
         }
         .slider-container {
             margin: 10px 0;
         }
-        .hidden {
-            display: none;
-        }
     </style>
 </head>
 <body>
 
-    <button id="startRecording">Start Recording</button>
-    <button id="stopRecording" class="hidden">Stop Recording</button>
+    <button id="startBtn">Play Microphone Audio</button>
 
     <div class="controls" id="controls">
-        <button id="playRecording">Play Recording</button>
-        
         <div>
             <input type="checkbox" id="hearVoice">
             <label for="hearVoice">Hear Your Voice</label>
@@ -48,103 +43,108 @@
             <label>Delay: <span id="delayValue">0</span> sec</label>
             <input type="range" id="delay" min="0" max="2" step="0.1" value="0">
         </div>
-
-        <div id="downloadOptions" class="hidden">
-            <label>Save As:</label>
-            <button class="saveBtn" data-format="mp3">MP3</button>
-            <button class="saveBtn" data-format="ogg">OGG</button>
-            <button class="saveBtn" data-format="wav">WAV</button>
+        <div class="slider-container">
+            <label>Loudness: <span id="loudnessValue">1</span>x</label>
+            <input type="range" id="loudness" min="0" max="2" step="0.1" value="1">
         </div>
     </div>
 
-    <script>
-        let mic, recorder, recordedBuffer, pitchShift, delayEffect, gainNode;
-        const startRecBtn = document.getElementById("startRecording");
-        const stopRecBtn = document.getElementById("stopRecording");
-        const playRecBtn = document.getElementById("playRecording");
-        const controlsDiv = document.getElementById("controls");
-        const hearVoiceCheckbox = document.getElementById("hearVoice");
-        const downloadOptions = document.getElementById("downloadOptions");
+    <div class="recording-controls" id="recordingControls">
+        <button id="startRecording">Start Recording</button>
+        <button id="stopRecording" disabled>Stop Recording</button>
+        <div id="downloadLinks"></div>
+    </div>
 
-        async function startRecording() {
+    <script>
+        let mic, pitchShift, delayEffect, gainNode, recorder, audioStream;
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        async function startMicrophone() {
             await Tone.start();
             mic = new Tone.UserMedia();
-            recorder = new Tone.Recorder();
+            await mic.open(); // Request microphone permission
 
-            // Create Pitch Shift Effect
-            pitchShift = new Tone.PitchShift(0);
+            // Create audio effects
+            pitchShift = new Tone.PitchShift(0).toDestination();
+            delayEffect = new Tone.FeedbackDelay("0s").toDestination();
+            gainNode = new Tone.Gain(1).toDestination(); // Default loudness is 1
+
+            // Connect mic to pitch shift, delay, and gain
             mic.connect(pitchShift);
-
-            // Create Delay Effect
-            delayEffect = new Tone.FeedbackDelay("0s");
             pitchShift.connect(delayEffect);
-
-            // Create Gain Node for Hearing Own Voice
-            gainNode = new Tone.Gain(0);
             delayEffect.connect(gainNode);
-            gainNode.toDestination();
 
-            await mic.open();
-            mic.connect(recorder);
-            await recorder.start();
-
-            startRecBtn.classList.add("hidden");
-            stopRecBtn.classList.remove("hidden");
+            // Show controls after microphone is activated
+            document.getElementById("controls").style.display = "block";
+            document.getElementById("recordingControls").style.display = "block";
         }
 
-        async function stopRecording() {
-            recordedBuffer = await recorder.stop();
-            stopRecBtn.classList.add("hidden");
-            controlsDiv.style.display = "block";
-            downloadOptions.classList.remove("hidden");
-        }
+        document.getElementById("startBtn").addEventListener("click", startMicrophone);
 
-        function playRecording() {
-            if (!recordedBuffer) return;
-            const player = new Tone.Player(recordedBuffer).toDestination();
-            player.playbackRate = parseFloat(document.getElementById("speed").value);
-            pitchShift.pitch = parseInt(document.getElementById("pitchShift").value);
-            delayEffect.delayTime.value = parseFloat(document.getElementById("delay").value);
-            player.start();
-        }
-
-        function downloadRecording(format) {
-            if (!recordedBuffer) return;
-            const blob = new Blob([recordedBuffer], { type: `audio/${format}` });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `recording.${format}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-
-        startRecBtn.addEventListener("click", startRecording);
-        stopRecBtn.addEventListener("click", stopRecording);
-        playRecBtn.addEventListener("click", playRecording);
-
+        // Pitch Shift Control
         document.getElementById("pitchShift").addEventListener("input", function() {
             pitchShift.pitch = parseInt(this.value);
             document.getElementById("pitchValue").innerText = this.value;
         });
 
+        // Speed Control (Not applicable for live mic, works on recorded audio)
         document.getElementById("speed").addEventListener("input", function() {
             document.getElementById("speedValue").innerText = this.value;
         });
 
+        // Delay Control
         document.getElementById("delay").addEventListener("input", function() {
             delayEffect.delayTime.value = this.value;
             document.getElementById("delayValue").innerText = this.value;
         });
 
-        hearVoiceCheckbox.addEventListener("change", function() {
-            gainNode.gain.value = this.checked ? 1 : 0;
+        // Loudness Control (Gain control)
+        document.getElementById("loudness").addEventListener("input", function() {
+            gainNode.gain.value = this.value;
+            document.getElementById("loudnessValue").innerText = this.value;
         });
 
-        document.querySelectorAll(".saveBtn").forEach(button => {
-            button.addEventListener("click", () => downloadRecording(button.dataset.format));
+        // Hear Your Own Voice Checkbox
+        document.getElementById("hearVoice").addEventListener("change", function() {
+            gainNode.gain.value = this.checked ? 1 : 0; // Toggle hearing own voice
         });
+
+        // Recording Setup
+        document.getElementById("startRecording").addEventListener("click", startRecording);
+        document.getElementById("stopRecording").addEventListener("click", stopRecording);
+
+        async function startRecording() {
+            // Record microphone audio using RecordRTC
+            audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(audioStream);
+            mediaRecorder.ondataavailable = event => recordedChunks.push(event.data);
+            mediaRecorder.onstop = saveRecording;
+
+            mediaRecorder.start();
+            document.getElementById("startRecording").disabled = true;
+            document.getElementById("stopRecording").disabled = false;
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            audioStream.getTracks().forEach(track => track.stop()); // Stop mic stream
+            document.getElementById("startRecording").disabled = false;
+            document.getElementById("stopRecording").disabled = true;
+        }
+
+        function saveRecording() {
+            const blob = new Blob(recordedChunks, { type: "audio/wav" });
+            const audioUrl = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = audioUrl;
+            link.download = "recording.wav";
+            link.textContent = "Download WAV";
+            document.getElementById("downloadLinks").innerHTML = "";
+            document.getElementById("downloadLinks").appendChild(link);
+
+            // MP3 and OGG download options can be added by converting the recorded WAV to these formats
+        }
 
     </script>
 
